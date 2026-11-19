@@ -585,4 +585,4 @@ Do not commit real credentials or secrets to the repository.
 - Implement SMS notifications for OTP verification and transaction alerts.
 - Implement idempotency to prevent duplicate transaction and payment processing.
 - Add integration testing for inter-service communication and transaction workflows.
-- - Implement Razorpay webhooks to handle payment status updates and verify successful payments.
+- Implement Razorpay webhooks to handle payment status updates and verify successful payments.
