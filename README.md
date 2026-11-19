@@ -403,7 +403,7 @@ Make sure the following tools are installed:
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/Atulb0ra/Digital-Banking-System.git
+git clone <YOUR_GITHUB_REPOSITORY_URL>
 cd Banking-System
 ```
 
