@@ -37,11 +37,9 @@ Account Service      Transaction          Payment
 - **REST:** Client → API Gateway → Microservices
 - **OpenFeign:** Transaction/Fraud services → Account Service
 - **Kafka:** Fraud, OTP, refund, transaction, and payment events
-- **Redis:** OTP storage and expiration
+- **Redis:** OTP storage, expiration, and gateway rate limiting
 - **MySQL:** Persistent account, transaction, and payment records
 - **Razorpay:** External payment gateway
-
----
 
 ## 2. Microservices
 
@@ -53,8 +51,6 @@ Account Service      Transaction          Payment
 | Payment Service | 8083 | Razorpay payment orders and webhook processing |
 | Fraud Detection | 8084 | Transaction velocity, amount, and balance risk checks |
 | Notification | 8085 | Transaction, OTP, fraud, refund, and payment notifications |
-
----
 
 ## 3. Technology Stack
 
@@ -72,9 +68,65 @@ Account Service      Transaction          Payment
 - Docker Compose
 - Lombok
 
----
+## 4. API Gateway Service
 
-## 4. Account Service
+**Port:** 8080
+
+### Responsibilities
+
+- Acts as the single entry point for all banking microservices.
+- Routes account, transaction, and payment API requests.
+- Exposes Swagger/OpenAPI documentation for every service.
+- Applies Redis-based request rate limiting.
+- Configures CORS for frontend and Swagger clients.
+- Prevents duplicate CORS headers in responses.
+- Rewrites Swagger document paths before forwarding them.
+
+### Gateway Routes
+
+| Route | Destination |
+|---|---|
+| `/api/v1/accounts/` | Account Service — 8081 |
+| `/api/v1/transactions/` | Transaction Service — 8082 |
+| `/api/v1/payments/` | Payment Service — 8083 |
+| `/v3/api-docs/account` | Account Service OpenAPI document |
+| `/v3/api-docs/transaction` | Transaction Service OpenAPI document |
+| `/v3/api-docs/payment` | Payment Service OpenAPI document |
+
+### Swagger Configuration
+
+The gateway serves Swagger UI at:
+
+`http://localhost:8080/swagger-ui.html`
+
+Swagger dropdown services:
+
+- Account Service
+- Transaction Service
+- Payment Service
+
+This allows all three API documentation interfaces to be accessed through one gateway interface.
+
+### Rate Limiting
+
+The gateway uses Redis as a reactive rate limiter:
+
+| Route | Requests per second | Burst capacity |
+|---|---:|---:|
+| Account routes | 10 | 20 |
+| Transaction routes | 10 | 20 |
+| Payment routes | 5 | 10 |
+
+### Gateway Benefits
+
+- Centralized routing
+- Simplified client integration
+- Consistent CORS handling
+- Protection through rate limiting
+- Unified Swagger documentation
+- Decouples frontend clients from individual service ports
+
+## 5. Account Service
 
 **Port:** 8081
 
@@ -101,9 +153,7 @@ Account Service      Transaction          Payment
 
 The `deductBalance()` operation rejects inactive accounts. The `creditBalance()` operation is used for receiver credits and compensating refunds.
 
----
-
-## 5. Transaction Service
+## 6. Transaction Service
 
 **Port:** 8082
 
@@ -128,9 +178,41 @@ The `deductBalance()` operation rejects inactive accounts. The `creditBalance()`
 | GET | `/api/v1/transactions/account/{accountNumber}` |
 | POST | `/api/v1/transactions/{transactionId}/verify?otp={otp}` |
 
----
+## 7. Fraud Detection Service
 
-## 6. Payment Service
+**Port:** 8084
+
+Consumes transaction initiation events and evaluates:
+
+1. Transaction velocity
+2. Unusually large transaction amounts
+3. Balance risk percentage
+4. Suspicious activity thresholds
+
+### Fraud Outcomes
+
+- **Clean transaction:** Publish `fraud.check.clean`
+- **Suspicious transaction:** Publish `verification.required`
+- **Confirmed fraud:** Publish `fraud.detected`
+
+The Account Service consumes the fraud event and blocks the sender account.
+
+## 8. Notification Service
+
+**Port:** 8085
+
+Consumes Kafka events for:
+
+- Generated OTPs
+- Transaction completion
+- Refunds
+- Fraud detection
+- Payment completion
+- Payment failure
+
+Notification delivery can later be integrated with email, SMS, WebSocket, push notifications, or an external provider.
+
+## 9. Payment Service
 
 **Port:** 8083
 
@@ -167,19 +249,14 @@ The `deductBalance()` operation rejects inactive accounts. The `creditBalance()`
 ```text
 Create order
     |
-    v
 Razorpay checkout
     |
-    v
 Payment webhook
     |
-    v
 COMPLETED / FAILED
     |
-    v
 Kafka payment event
     |
-    v
 Notification
 ```
 
@@ -187,47 +264,7 @@ Creating a Razorpay order does not automatically change the account balance. Acc
 
 The webhook endpoint requires a public HTTPS domain and Razorpay webhook configuration.
 
----
-
-## 7. Fraud Detection Service
-
-**Port:** 8084
-
-Consumes transaction initiation events and evaluates:
-
-1. Transaction velocity
-2. Unusually large transaction amounts
-3. Balance risk percentage
-4. Suspicious activity thresholds
-
-### Fraud Outcomes
-
-- Clean transaction: publish `fraud.check.clean`
-- Suspicious transaction: publish `verification.required`
-- Confirmed fraud: publish `fraud.detected`
-
-The account service consumes the fraud event and blocks the sender account.
-
----
-
-## 8. Notification Service
-
-**Port:** 8085
-
-Consumes Kafka events for:
-
-- Generated OTPs
-- Transaction completion
-- Refunds
-- Fraud detection
-- Payment completion
-- Payment failure
-
-Notification delivery can later be integrated with email, SMS, WebSocket, push notifications, or an external provider.
-
----
-
-## 9. Kafka Event Architecture
+## 10. Kafka Event Architecture
 
 | Topic | Purpose |
 |---|---|
@@ -241,9 +278,7 @@ Notification delivery can later be integrated with email, SMS, WebSocket, push n
 | `payment.completed` | Notify successful payment |
 | `payment.failed` | Notify failed payment |
 
----
-
-## 10. Standard Transfer Flow
+## 11. Standard Transfer Flow
 
 ```text
 Client
@@ -261,36 +296,34 @@ Transaction Service
   +--> Publish transaction.initiated
               |
               v
-       Fraud Detection
+      Fraud Detection
               |
-        +------+------+
-        |             |
-        v             v
-  fraud.check.clean  verification.required
-        |             |
-        v             v
-   COMPLETE     Generate OTP in Redis
+       +------+------+
+       |             |
+       v             v
+ fraud.check.clean  verification.required
+       |             |
+       v             v
+  COMPLETE     Generate OTP in Redis
                       |
                       v
-               OTP verification
+              OTP verification
                       |
-                +------+------+
-                |             |
-                v             v
-            COMPLETE       FLAGGED + refund
+               +------+------+
+               |             |
+               v             v
+           COMPLETE       FLAGGED + refund
 ```
 
----
-
-## 11. OTP Verification
+## 12. OTP Verification
 
 An OTP is generated after a suspicious transaction:
 
-**Key:** `verification:otp:{transactionId}`
-
-**Value:** generated OTP
-
-**TTL:** 5 minutes
+```text
+Key: verification:otp:{transactionId}
+Value: generated OTP
+TTL: 5 minutes
+```
 
 Redis automatically expires OTP values after five minutes.
 
@@ -318,9 +351,7 @@ Redis automatically expires OTP values after five minutes.
 3. Mark the transaction FLAGGED.
 4. Publish `transaction.refunded`.
 
----
-
-## 12. Saga Compensation
+## 13. Saga Compensation
 
 The sender balance is deducted before fraud verification. If OTP verification expires or fails, the system performs a compensating transaction:
 
@@ -328,140 +359,3 @@ The sender balance is deducted before fraud verification. If OTP verification ex
 Credit sender balance
   |
   v
-Update transaction to FLAGGED
-  |
-  v
-Publish transaction.refunded
-  |
-  v
-Notify the user
-```
-
-This is a compensating-transactions **SAGA pattern**. It does not provide atomic distributed transactions, but it provides eventual consistency through Kafka events and compensation logic.
-
----
-
-## 13. Swagger Documentation
-
-**Swagger UI:**
-
-http://localhost:8080/swagger-ui.html
-
-### API Definitions
-
-- Account: http://localhost:8080/v3/api-docs/account
-- Transaction: http://localhost:8080/v3/api-docs/transaction
-- Payment: http://localhost:8080/v3/api-docs/payment
-
-### Direct Service Documentation
-
-- Account: http://localhost:8081/v3/api-docs
-- Transaction: http://localhost:8082/v3/api-docs
-- Payment: http://localhost:8083/v3/api-docs
-
----
-
-## 14. Databases
-
-### MySQL
-
-- `account_db`: account records and balances
-- `transaction_db`: transaction lifecycle records
-- `payment_db`: Razorpay order and payment records
-
-### Redis
-
-- OTP key-value storage
-- Gateway rate-limiter state
-- Five-minute OTP expiration
-
-### Kafka Topics
-
-Kafka provides asynchronous communication between transaction, fraud, payment, account, and notification services.
-
----
-
-## 15. Local Infrastructure
-
-Start infrastructure:
-
-```bash
-docker-compose up -d
-```
-
-### Services
-
-| Service | Address |
-|---|---|
-| MySQL | `localhost:3306` |
-| Redis | `localhost:7000` |
-| Kafka | `localhost:9092` |
-| Zookeeper | `localhost:2181` |
-
----
-
-## 16. Running the Project
-
-### Build the project
-
-```bash
-mvn clean install
-```
-
-### Start services in this order
-
-1. Docker infrastructure
-2. Account Service
-3. Transaction Service
-4. Payment Service
-5. Fraud Detection Service
-6. Notification Service
-7. API Gateway
-
-### Example
-
-```bash
-cd account-service
-mvn spring-boot:run
-```
-
-Repeat with ports configured for each service.
-
----
-
-## 17. Environment Variables
-
-Do not commit real credentials.
-
-```properties
-SPRING_DATASOURCE_USERNAME=root
-SPRING_DATASOURCE_PASSWORD=root
-
-RAZORPAY_KEY_ID=your_test_key
-RAZORPAY_KEY_SECRET=your_test_secret
-RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
-
-SPRING_KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-
-SPRING_REDIS_HOST=localhost
-SPRING_REDIS_PORT=7000
-```
-
----
-
-## 18. Future Improvements
-
-- Add Spring Security and JWT authentication
-- Protect customer APIs and internal SAGA endpoints
-- Add payment signature verification
-- Implement an account/payment deduction workflow
-- Add idempotent Kafka consumers
-- Add retry and dead-letter topics
-- Implement transactional outbox pattern
-- Integrate email/SMS providers
-- Add integration tests
-- Add Dockerfiles for each microservice
-- Add centralized logging and tracing
-- Add API rate limiting per user or account
-- Publish Swagger OTP fields only in development mode
-- Avoid exposing internal account deduct/credit endpoints publicly
