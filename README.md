@@ -30,3 +30,17 @@ Account Service      Transaction          Payment
               v                           v
       Fraud Detection               Notification
         Service :8084                 Service :8085
+
+Communication
+•
+REST: Client → API Gateway → Microservices
+•
+OpenFeign: Transaction/Fraud services → Account Service
+•
+Kafka: Fraud, OTP, refund, transaction, and payment events
+•
+Redis: OTP storage and expiration
+•
+MySQL: Persistent account, transaction, and payment records
+•
+Razorpay: External payment gateway
