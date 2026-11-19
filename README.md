@@ -260,9 +260,7 @@ Kafka payment event
 Notification
 ```
 
-Creating a Razorpay order does not automatically change the account balance. Account deduction or credit should occur only through an explicitly implemented banking/payment business workflow.
-
-The webhook endpoint requires a public HTTPS domain and Razorpay webhook configuration.
+**Note:** Razorpay webhook integration is not implemented yet. Implementing it requires deploying the application to a publicly accessible HTTPS domain and configuring the webhook URL in the Razorpay Dashboard.
 
 ## 10. Kafka Event Architecture
 
@@ -359,3 +357,232 @@ The sender balance is deducted before fraud verification. If OTP verification ex
 Credit sender balance
   |
   v
+Update transaction to FLAGGED
+  |
+  v
+Publish transaction.refunded
+  |
+  v
+Notify the user
+```
+
+This is a compensating-transactions SAGA pattern. It does not provide atomic distributed transactions, but it provides eventual consistency through Kafka events and compensation logic.
+
+## 14. Databases
+
+### MySQL
+
+- `account_db`: Account records and balances
+- `transaction_db`: Transaction lifecycle records
+- `payment_db`: Razorpay order and payment records
+
+### Redis
+
+- OTP key-value storage
+- Gateway rate-limiter state
+- Five-minute OTP expiration
+
+### Kafka Topics
+
+Kafka provides asynchronous communication between transaction, fraud, payment, account, and notification services.
+
+## 15. Project Setup and Installation
+
+Follow these steps to run the Banking System locally.
+
+### Prerequisites
+
+Make sure the following tools are installed:
+
+- Java 17
+- Maven
+- Docker Desktop
+- Git
+- IntelliJ IDEA or another Java IDE
+
+### Step 1: Clone the Repository
+
+```bash
+git clone <YOUR_GITHUB_REPOSITORY_URL>
+cd Banking-System
+```
+
+Replace the repository URL with the actual GitHub repository URL.
+
+### Step 2: Configure Environment Variables
+
+Configure the required environment variables before starting the services.
+
+Example configuration:
+
+```env
+SPRING_DATASOURCE_USERNAME=root
+SPRING_DATASOURCE_PASSWORD=root
+
+RAZORPAY_KEY_ID=your_test_key
+RAZORPAY_KEY_SECRET=your_test_secret
+RAZORPAY_WEBHOOK_SECRET=your_webhook_secret
+
+SPRING_KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+
+SPRING_REDIS_HOST=localhost
+SPRING_REDIS_PORT=7000
+```
+
+Use your own local database credentials and Razorpay test credentials.
+
+Make sure the variable names match the configuration used by the individual services. Configure them in the appropriate `.env` file, IDE run configuration, or shell environment as required by the project.
+
+**Important:** Never commit actual database passwords, Razorpay credentials, or webhook secrets to GitHub.
+
+### Step 3: Start Docker Infrastructure
+
+The project uses Docker Compose to run the required infrastructure services.
+
+From the directory containing the Docker Compose file, execute:
+
+```bash
+docker-compose up -d
+```
+
+This starts the following infrastructure:
+
+| Service | Port |
+|---|---:|
+| MySQL | 3306 |
+| Redis | 7000 |
+| Kafka | 9092 |
+| Zookeeper | 2181 |
+
+Verify that the containers are running:
+
+```bash
+docker-compose ps
+```
+
+Wait until the infrastructure services are ready before starting the Spring Boot applications.
+
+### Step 4: Build the Microservices
+
+Build each Spring Boot service using Maven.
+
+From each service directory, run:
+
+```bash
+mvn clean install
+```
+
+Repeat this for the individual service directories.
+
+### Step 5: Run the Microservices
+
+Start the services in the following order:
+
+1. API Gateway — `8080`
+2. Account Service — `8081`
+3. Transaction Service — `8082`
+4. Fraud Detection Service — `8084`
+5. Notification Service — `8085`
+6. Payment Service — `8083`
+
+
+Run each service from its respective directory:
+
+```bash
+cd account-service
+mvn spring-boot:run
+```
+
+Open separate terminals for the other services and execute:
+
+```bash
+cd transaction-service
+mvn spring-boot:run
+```
+
+```bash
+cd fraud-detection-service
+mvn spring-boot:run
+```
+
+```bash
+cd notification-service
+mvn spring-boot:run
+```
+
+```bash
+cd payment-service
+mvn spring-boot:run
+```
+
+```bash
+cd api-gateway
+mvn spring-boot:run
+```
+
+Use the actual directory names present in the cloned repository if they differ.
+
+### Step 6: Access the Application
+
+Once the required services are running, access the gateway Swagger UI:
+
+`http://localhost:8080/swagger-ui.html`
+
+The gateway routes requests to the Account, Transaction, and Payment services.
+
+**Important:** Swagger UI aggregation depends on the API Gateway and the Account, Transaction, and Payment services being available. If any of these services are stopped or their OpenAPI endpoints cannot be reached, the corresponding Swagger documentation may not load correctly.
+
+The other services must also be running for their respective Kafka-based workflows to function correctly.
+
+## 16. Swagger Documentation
+
+### API Gateway Swagger UI
+
+`http://localhost:8080/swagger-ui.html`
+
+The gateway provides a unified Swagger interface for:
+
+- Account Service
+- Transaction Service
+- Payment Service
+
+### Aggregated OpenAPI Documents
+
+| Service | URL |
+|---|---|
+| Account | `http://localhost:8080/v3/api-docs/account` |
+| Transaction | `http://localhost:8080/v3/api-docs/transaction` |
+| Payment | `http://localhost:8080/v3/api-docs/payment` |
+
+### Direct Service Documentation
+
+| Service | URL |
+|---|---|
+| Account | `http://localhost:8081/v3/api-docs` |
+| Transaction | `http://localhost:8082/v3/api-docs` |
+| Payment | `http://localhost:8083/v3/api-docs` |
+
+## 17. Environment Variables
+
+Configure the following environment variables according to your local setup:
+
+| Variable | Description |
+|---|---|
+| `SPRING_DATASOURCE_USERNAME` | MySQL username |
+| `SPRING_DATASOURCE_PASSWORD` | MySQL password |
+| `RAZORPAY_KEY_ID` | Razorpay test API key |
+| `RAZORPAY_KEY_SECRET` | Razorpay test API secret |
+| `RAZORPAY_WEBHOOK_SECRET` | Razorpay webhook secret |
+| `SPRING_KAFKA_BOOTSTRAP_SERVERS` | Kafka bootstrap address |
+| `SPRING_REDIS_HOST` | Redis host |
+| `SPRING_REDIS_PORT` | Redis port |
+
+Do not commit real credentials or secrets to the repository.
+
+## Future Improvements
+
+- Implement Spring Security with JWT-based authentication and authorization.
+- Implement SMS notifications for OTP verification and transaction alerts.
+- Implement idempotency to prevent duplicate transaction and payment processing.
+- Add integration testing for inter-service communication and transaction workflows.
+- - Implement Razorpay webhooks to handle payment status updates and verify successful payments.
